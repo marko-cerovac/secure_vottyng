@@ -1,9 +1,7 @@
 mod app;
-// mod view;
 
 use std::io;
 use app::App;
-
 
 fn main() -> io::Result<()> {
     let mut terminal = ratatui::init(); // initialize the terminal in raw mode
