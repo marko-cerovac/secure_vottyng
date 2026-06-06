@@ -1,4 +1,6 @@
 use std::io;
+
+use crossterm::event::{KeyCode, KeyModifiers};
 use std::sync::mpsc;
 
 use ratatui::DefaultTerminal;
@@ -53,15 +55,13 @@ impl App {
     }
 
     fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) -> io::Result<()> {
-        if key.kind == crossterm::event::KeyEventKind::Press {
-            match key.code {
-                crossterm::event::KeyCode::Char('q') => {
-                    self.current_scene.on_exit();
-                    self.exit = true;
-                    return Ok(());
-                }
-                _ => {}
-            }
+        if key.kind == crossterm::event::KeyEventKind::Press
+            && key.modifiers == KeyModifiers::CONTROL
+            && key.code == KeyCode::Char('c')
+        {
+            self.current_scene.on_exit();
+            self.exit = true;
+            return Ok(());
         }
 
         let action = self.current_scene.handle(key);
@@ -72,6 +72,10 @@ impl App {
                 self.current_scene.on_exit();
                 new_scene.on_enter(self.event_tx.clone());
                 self.current_scene = new_scene;
+            }
+            Action::Quit => {
+                self.current_scene.on_exit();
+                self.exit = true;
             }
         }
 

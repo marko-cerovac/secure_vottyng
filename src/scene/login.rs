@@ -1,6 +1,6 @@
 use std::sync::mpsc;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout};
 use ratatui::style::Color;
@@ -84,9 +84,13 @@ impl LoginScene {
             Line::from(vec![
                 Span::raw("Press "),
                 Span::raw(" Enter ").bold().black().on_red(),
-                Span::raw(" to log in | "),
-                Span::raw(" Q ").bold().black().on_red(),
-                Span::raw(" to quit"),
+                Span::raw(" to log in"),
+            ]).centered().dark_gray(),
+            Line::from(vec![
+                Span::raw(" Ctrl+R ").bold().black().on_red(),
+                Span::raw(" register | "),
+                Span::raw(" Ctrl+C ").bold().black().on_red(),
+                Span::raw(" exit"),
             ]).centered().dark_gray(),
         ]);
 
@@ -142,6 +146,10 @@ impl LoginScene {
                     ))
                 }
             }
+            KeyCode::Char('r') if key.modifiers == KeyModifiers::CONTROL => {
+                Action::SwitchScene(Scene::Register(super::register::RegisterScene::new()))
+            }
+            KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => Action::Quit,
             KeyCode::Tab => {
                 self.focus = match self.focus {
                     FocusField::Username => FocusField::Password,

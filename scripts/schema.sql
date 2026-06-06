@@ -7,9 +7,9 @@ CREATE TABLE IF NOT EXISTS organizers (
 
 CREATE TABLE IF NOT EXISTS voters (
     id              SERIAL PRIMARY KEY,
-    first_name      TEXT NOT NULL,
-    last_name       TEXT NOT NULL,
-    username        TEXT NOT NULL UNIQUE,
+    first_name      VARCHAR(30) NOT NULL,
+    last_name       VARCHAR(30) NOT NULL,
+    username        VARCHAR(30) NOT NULL UNIQUE,
     password_hash   TEXT NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
