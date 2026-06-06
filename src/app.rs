@@ -2,123 +2,79 @@ use std::io;
 use std::sync::mpsc;
 
 use ratatui::DefaultTerminal;
-use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Style, Stylize};
-use ratatui::symbols::border;
-use ratatui::widgets::{Block, Gauge, Widget};
-use ratatui::{Frame, text::Line};
 
-use crate::event;
+use crate::event::Event;
+use crate::scene::{Action, Scene};
 
 pub struct App {
     pub exit: bool,
-    pub progress_bar_color: Color,
-    pub progress: f64,
+    current_scene: Scene,
+    event_tx: mpsc::Sender<Event>,
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(event_tx: mpsc::Sender<Event>) -> Self {
         App {
             exit: false,
-            progress_bar_color: Color::Green,
-            progress: 0.0,
+            current_scene: Scene::Login(crate::scene::login::LoginScene::new()),
+            event_tx,
         }
     }
 
-    pub fn run(&mut self, terminal: &mut DefaultTerminal, rx: mpsc::Receiver<event::Event>) -> io::Result<()> {
-        // the main event loop
-        while !self.exit {
+    pub fn run(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        rx: mpsc::Receiver<Event>,
+    ) -> io::Result<()> {
+        self.current_scene.on_enter(self.event_tx.clone());
+        terminal.draw(|frame| self.draw(frame))?;
 
-            match rx.recv().unwrap() { // TODO: fix this unwrap
-                event::Event::Input(key_event) => self.handle_key_event(key_event)?,
-                event::Event::Progress(progress) => self.progress = progress,
+        while !self.exit {
+            match rx.recv().unwrap() {
+                Event::Input(key_event) => {
+                    self.handle_key_event(key_event)?;
+                }
+                Event::Progress(progress) => {
+                    if let Scene::Dashboard(ref mut dash) = self.current_scene {
+                        dash.progress = progress;
+                    }
+                }
             }
 
-            // draw one frame
             terminal.draw(|frame| self.draw(frame))?;
         }
 
+        self.current_scene.on_exit();
         Ok(())
     }
 
-    fn draw(&self, frame: &mut Frame) {
-        // for smaller applications, it's common to
-        // implement the Widget trait directly on the
-        // App struct to keep things in one place
-        frame.render_widget(self, frame.area());
+    fn draw(&self, frame: &mut ratatui::Frame) {
+        self.current_scene.draw(frame);
     }
 
     fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) -> io::Result<()> {
         if key.kind == crossterm::event::KeyEventKind::Press {
             match key.code {
                 crossterm::event::KeyCode::Char('q') => {
+                    self.current_scene.on_exit();
                     self.exit = true;
-                }
-                crossterm::event::KeyCode::Char('c') => {
-                    self.progress_bar_color = self.get_next_color();
+                    return Ok(());
                 }
                 _ => {}
             }
         }
 
-        Ok(())
-    }
-
-    fn get_next_color(&self) -> Color {
-        match self.progress_bar_color {
-            Color::Green => Color::Yellow,
-            Color::Yellow => Color::Red,
-            Color::Red => Color::Green,
-            _ => Color::Green,
+        let action = self.current_scene.handle(key);
+        match action {
+            Action::None => {}
+            Action::SwitchScene(new_scene) => {
+                let mut new_scene = new_scene;
+                self.current_scene.on_exit();
+                new_scene.on_enter(self.event_tx.clone());
+                self.current_scene = new_scene;
+            }
         }
-    }
-}
 
-// we implement the Widget trait on a
-// reference to the App struct
-impl Widget for &App {
-    fn render(self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer)
-    where
-        Self: Sized,
-    {
-        let vertical_layout =
-            Layout::vertical([Constraint::Percentage(20), Constraint::Percentage(80)]);
-        let [title_area, gauge_area] = vertical_layout.areas(area);
-        // render the title at the top of the layout
-        Line::from("Process overview")
-            .bold()
-            .render(title_area, buf);
-
-        let instructions = Line::from(vec![
-            " Change color ".into(),
-            "<C>".blue().bold(),
-            " Quit ".into(),
-            "<Q>".blue().bold(),
-        ])
-        .centered();
-
-        let border = Block::bordered()
-            .title(" Secure voting happening ")
-            .title_bottom(instructions)
-            .border_set(border::THICK);
-
-        let progress_bar = Gauge::default()
-            .gauge_style(Style::default().fg(self.progress_bar_color))
-            .block(border)
-            .label(format!("Voting in progress: {:.2}%", self.progress * 100_f64))
-            .ratio(self.progress);
-
-        // the first param takes an area.
-        // we can create a rectangle to use as the area.
-        //
-        progress_bar.render(
-            Rect {
-                x: gauge_area.left(),
-                y: gauge_area.top(),
-                width: gauge_area.width,
-                height: 3,
-            },
-            buf,
-        );
+        Ok(())
     }
 }
