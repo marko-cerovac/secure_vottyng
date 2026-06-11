@@ -1,8 +1,13 @@
 [package]
-name = "secure_voting"
+name = "secure_vottying"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 ratatui = "0.28"
 crossterm = "0.28"
+postgres = { version = "0.19", features = ["with-chrono-0_4"] }
+dotenvy = "0.15"
+chrono = { version = "0.4", features = ["serde"] }
+arboard = "3.6.1"
+rcgen = { version = "0.14.8", features = ["x509-parser"] }

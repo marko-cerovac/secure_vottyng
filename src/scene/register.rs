@@ -1,21 +1,17 @@
 use std::sync::mpsc;
 
 use super::{Action, Scene};
+use crate::db::DbRequest;
 use crate::event;
+use crate::models::AccountRegistrationForm;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::Frame;
+
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::symbols::border;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
-
-#[derive(Default, PartialEq)]
-enum AccountType {
-    #[default]
-    Organizer,
-    Voter,
-}
 
 #[derive(Default, PartialEq)]
 enum FocusField {
@@ -28,25 +24,17 @@ enum FocusField {
 }
 
 pub struct RegisterScene {
-    account_type: AccountType,
+    account_form: AccountRegistrationForm,
     focus: FocusField,
-    organization: String,
-    first_name: String,
-    last_name: String,
-    username: String,
-    password: String,
+    db_tx: Option<mpsc::Sender<DbRequest>>,
 }
 
 impl RegisterScene {
     pub fn new() -> Self {
         RegisterScene {
-            account_type: AccountType::default(),
+            account_form: AccountRegistrationForm::default(),
             focus: FocusField::default(),
-            organization: String::new(),
-            first_name: String::new(),
-            last_name: String::new(),
-            username: String::new(),
-            password: String::new(),
+            db_tx: None,
         }
     }
 
@@ -90,12 +78,12 @@ impl RegisterScene {
     }
 
     fn draw_header(&self, frame: &mut Frame, area: Rect) {
-        let (org_label, voter_label) = match self.account_type {
-            AccountType::Organizer => (
+        let (org_label, voter_label) = match &self.account_form {
+            AccountRegistrationForm::Organizer { .. } => (
                 Span::raw(" Organizer ").black().on_red(),
                 Span::raw(" Voter "),
             ),
-            AccountType::Voter => (
+            AccountRegistrationForm::User { .. } => (
                 Span::raw(" Organizer "),
                 Span::raw(" Voter ").black().on_blue(),
             ),
@@ -110,7 +98,7 @@ impl RegisterScene {
                     Span::raw("I am a: "),
                     org_label,
                     voter_label,
-                    Span::raw(" (Ctrl+t to toggle)").dark_gray(),
+                    Span::raw(" (Ctrl+t)").dark_gray(),
                 ])
                 .centered(),
                 Line::from(""),
@@ -131,49 +119,52 @@ impl RegisterScene {
     }
 
     fn draw_input_widget(&self, frame: &mut Frame, area: Rect) {
-        let caret_color = match self.account_type {
-            AccountType::Organizer => Color::Red,
-            AccountType::Voter => Color::Blue,
+        let caret_color = match &self.account_form {
+            AccountRegistrationForm::Organizer { .. } => Color::Red,
+            AccountRegistrationForm::User { .. } => Color::Blue,
         };
         let border_style = Style::new().fg(Color::DarkGray);
-        let make_block = || Block::new().borders(Borders::ALL).border_style(border_style);
+        let make_block = || {
+            Block::new()
+                .borders(Borders::ALL)
+                .border_style(border_style)
+        };
 
-        match self.account_type {
-            AccountType::Organizer => {
-                let areas = Layout::vertical([
-                    Constraint::Length(3),
-                    Constraint::Length(3),
-                ])
-                .split(area);
+        match &self.account_form {
+            AccountRegistrationForm::Organizer {
+                organization,
+                password,
+            } => {
+                let areas =
+                    Layout::vertical([Constraint::Length(3), Constraint::Length(3)]).split(area);
                 let org_focused = self.focus == FocusField::Organization;
                 let pw_focused = self.focus == FocusField::Password;
 
                 frame.render_widget(
                     Paragraph::new(Line::from(vec![
-                        Span::styled(
-                            if org_focused { "> " } else { "  " },
-                            caret_color,
-                        ),
+                        Span::styled(if org_focused { "> " } else { "  " }, caret_color),
                         Span::styled("Organization: ", Color::DarkGray),
-                        Span::raw(&self.organization),
+                        Span::raw(organization),
                     ]))
                     .block(make_block()),
                     areas[0],
                 );
                 frame.render_widget(
                     Paragraph::new(Line::from(vec![
-                        Span::styled(
-                            if pw_focused { "> " } else { "  " },
-                            caret_color,
-                        ),
+                        Span::styled(if pw_focused { "> " } else { "  " }, caret_color),
                         Span::styled("Password: ", Color::DarkGray),
-                        Span::raw("*".repeat(self.password.len())),
+                        Span::raw("*".repeat(password.len())),
                     ]))
                     .block(make_block()),
                     areas[1],
                 );
             }
-            AccountType::Voter => {
+            AccountRegistrationForm::User {
+                f_name,
+                l_name,
+                username,
+                password,
+            } => {
                 let areas = Layout::vertical([
                     Constraint::Length(3),
                     Constraint::Length(3),
@@ -188,48 +179,36 @@ impl RegisterScene {
 
                 frame.render_widget(
                     Paragraph::new(Line::from(vec![
-                        Span::styled(
-                            if fn_focused { "> " } else { "  " },
-                            caret_color,
-                        ),
+                        Span::styled(if fn_focused { "> " } else { "  " }, caret_color),
                         Span::styled("First Name: ", Color::DarkGray),
-                        Span::raw(&self.first_name),
+                        Span::raw(f_name),
                     ]))
                     .block(make_block()),
                     areas[0],
                 );
                 frame.render_widget(
                     Paragraph::new(Line::from(vec![
-                        Span::styled(
-                            if ln_focused { "> " } else { "  " },
-                            caret_color,
-                        ),
+                        Span::styled(if ln_focused { "> " } else { "  " }, caret_color),
                         Span::styled("Last Name: ", Color::DarkGray),
-                        Span::raw(&self.last_name),
+                        Span::raw(l_name),
                     ]))
                     .block(make_block()),
                     areas[1],
                 );
                 frame.render_widget(
                     Paragraph::new(Line::from(vec![
-                        Span::styled(
-                            if un_focused { "> " } else { "  " },
-                            caret_color,
-                        ),
+                        Span::styled(if un_focused { "> " } else { "  " }, caret_color),
                         Span::styled("Username: ", Color::DarkGray),
-                        Span::raw(&self.username),
+                        Span::raw(username),
                     ]))
                     .block(make_block()),
                     areas[2],
                 );
                 frame.render_widget(
                     Paragraph::new(Line::from(vec![
-                        Span::styled(
-                            if pw_focused { "> " } else { "  " },
-                            caret_color,
-                        ),
+                        Span::styled(if pw_focused { "> " } else { "  " }, caret_color),
                         Span::styled("Password: ", Color::DarkGray),
-                        Span::raw("*".repeat(self.password.len())),
+                        Span::raw("*".repeat(password.len())),
                     ]))
                     .block(make_block()),
                     areas[3],
@@ -240,7 +219,25 @@ impl RegisterScene {
 
     fn draw_footer(&self, frame: &mut Frame, area: Rect) {
         frame.render_widget(
-            Paragraph::new(Line::from("footer").centered().dark_gray()),
+            Paragraph::new(vec![
+                Line::from(vec![
+                    Span::raw("Ctrl+"),
+                    Span::raw("T").bold(),
+                    Span::raw(" toggle  |  "),
+                    Span::raw("Tab").bold(),
+                    Span::raw(" focus next  |  "),
+                    Span::raw("Enter").bold(),
+                    Span::raw(" register  |  "),
+                    Span::raw("Ctrl+"),
+                    Span::raw("L").bold(),
+                    Span::raw(" login  |  "),
+                    Span::raw("Ctrl+"),
+                    Span::raw("C").bold(),
+                    Span::raw(" exit"),
+                ])
+                .centered()
+                .dark_gray(),
+            ]),
             area,
         );
     }
@@ -251,60 +248,272 @@ impl RegisterScene {
         }
         match key.code {
             KeyCode::Char('t') if key.modifiers == KeyModifiers::CONTROL => {
-                self.account_type = match self.account_type {
-                    AccountType::Organizer => AccountType::Voter,
-                    AccountType::Voter => AccountType::Organizer,
+                self.account_form = match self.account_form {
+                    AccountRegistrationForm::Organizer { .. } => AccountRegistrationForm::User {
+                        f_name: String::new(),
+                        l_name: String::new(),
+                        username: String::new(),
+                        password: String::new(),
+                    },
+                    AccountRegistrationForm::User { .. } => AccountRegistrationForm::Organizer {
+                        organization: String::new(),
+                        password: String::new(),
+                    },
                 };
-                self.focus = match self.account_type {
-                    AccountType::Organizer => FocusField::Organization,
-                    AccountType::Voter => FocusField::FirstName,
+                self.focus = match self.account_form {
+                    AccountRegistrationForm::Organizer { .. } => FocusField::Organization,
+                    AccountRegistrationForm::User { .. } => FocusField::FirstName,
                 };
                 Action::None
             }
             KeyCode::Char('l') if key.modifiers == KeyModifiers::CONTROL => {
                 Action::SwitchScene(Scene::Login(super::login::LoginScene::new()))
             }
+            KeyCode::Enter => {
+                // Send registration request to database
+                if let Some(db_tx) = &self.db_tx {
+                    let _ = db_tx.send(DbRequest::RegisterUser {
+                        form: self.account_form.clone(),
+                    });
+                }
+                Action::None
+            }
             KeyCode::Tab => {
-                self.focus = next_focus(&self.focus, &self.account_type);
+                self.focus = next_focus(&self.focus, &self.account_form);
                 Action::None
             }
             KeyCode::Backspace => {
-                match self.focus {
-                    FocusField::Organization => self.organization.pop(),
-                    FocusField::FirstName => self.first_name.pop(),
-                    FocusField::LastName => self.last_name.pop(),
-                    FocusField::Username => self.username.pop(),
-                    FocusField::Password => self.password.pop(),
-                };
+                match (&mut self.account_form, &self.focus) {
+                    (
+                        AccountRegistrationForm::Organizer {
+                            organization,
+                            password: _,
+                        },
+                        FocusField::Organization,
+                    ) => {
+                        organization.pop();
+                    }
+                    (
+                        AccountRegistrationForm::Organizer {
+                            organization: _,
+                            password,
+                        },
+                        FocusField::Password,
+                    ) => {
+                        password.pop();
+                    }
+                    (
+                        AccountRegistrationForm::User {
+                            f_name,
+                            l_name: _,
+                            username: _,
+                            password: _,
+                        },
+                        FocusField::FirstName,
+                    ) => {
+                        f_name.pop();
+                    }
+                    (
+                        AccountRegistrationForm::User {
+                            f_name: _,
+                            l_name,
+                            username: _,
+                            password: _,
+                        },
+                        FocusField::LastName,
+                    ) => {
+                        l_name.pop();
+                    }
+                    (
+                        AccountRegistrationForm::User {
+                            f_name: _,
+                            l_name: _,
+                            username,
+                            password: _,
+                        },
+                        FocusField::Username,
+                    ) => {
+                        username.pop();
+                    }
+                    (
+                        AccountRegistrationForm::User {
+                            f_name: _,
+                            l_name: _,
+                            username: _,
+                            password,
+                        },
+                        FocusField::Password,
+                    ) => {
+                        password.pop();
+                    }
+                    _ => {}
+                }
                 Action::None
             }
             KeyCode::Char(c) => {
-                match self.focus {
-                    FocusField::Organization => self.organization.push(c),
-                    FocusField::FirstName => self.first_name.push(c),
-                    FocusField::LastName => self.last_name.push(c),
-                    FocusField::Username => self.username.push(c),
-                    FocusField::Password => self.password.push(c),
-                };
+                match (&mut self.account_form, &self.focus) {
+                    (
+                        AccountRegistrationForm::Organizer {
+                            organization,
+                            password,
+                        },
+                        FocusField::Organization,
+                    ) => {
+                        organization.push(c);
+                    }
+                    (
+                        AccountRegistrationForm::Organizer {
+                            organization,
+                            password,
+                        },
+                        FocusField::Password,
+                    ) => {
+                        password.push(c);
+                    }
+                    (
+                        AccountRegistrationForm::User {
+                            f_name,
+                            l_name,
+                            username,
+                            password,
+                        },
+                        FocusField::FirstName,
+                    ) => {
+                        f_name.push(c);
+                    }
+                    (
+                        AccountRegistrationForm::User {
+                            f_name,
+                            l_name,
+                            username,
+                            password,
+                        },
+                        FocusField::LastName,
+                    ) => {
+                        l_name.push(c);
+                    }
+                    (
+                        AccountRegistrationForm::User {
+                            f_name,
+                            l_name,
+                            username,
+                            password,
+                        },
+                        FocusField::Username,
+                    ) => {
+                        username.push(c);
+                    }
+                    (
+                        AccountRegistrationForm::User {
+                            f_name,
+                            l_name,
+                            username,
+                            password,
+                        },
+                        FocusField::Password,
+                    ) => {
+                        password.push(c);
+                    }
+                    _ => {}
+                }
                 Action::None
             }
             _ => Action::None,
         }
     }
 
-    pub fn on_enter(&mut self, _tx: mpsc::Sender<event::Event>) {}
+    pub fn handle_paste(&mut self, text: &str) -> Action {
+        match (&mut self.account_form, &self.focus) {
+            (
+                AccountRegistrationForm::Organizer {
+                    organization,
+                    password,
+                },
+                FocusField::Organization,
+            ) => {
+                organization.push_str(text);
+            }
+            (
+                AccountRegistrationForm::Organizer {
+                    organization,
+                    password,
+                },
+                FocusField::Password,
+            ) => {
+                password.push_str(text);
+            }
+            (
+                AccountRegistrationForm::User {
+                    f_name,
+                    l_name,
+                    username,
+                    password,
+                },
+                FocusField::FirstName,
+            ) => {
+                f_name.push_str(text);
+            }
+            (
+                AccountRegistrationForm::User {
+                    f_name,
+                    l_name,
+                    username,
+                    password,
+                },
+                FocusField::LastName,
+            ) => {
+                l_name.push_str(text);
+            }
+            (
+                AccountRegistrationForm::User {
+                    f_name,
+                    l_name,
+                    username,
+                    password,
+                },
+                FocusField::Username,
+            ) => {
+                username.push_str(text);
+            }
+            (
+                AccountRegistrationForm::User {
+                    f_name,
+                    l_name,
+                    username,
+                    password,
+                },
+                FocusField::Password,
+            ) => {
+                password.push_str(text);
+            }
+            _ => {}
+        }
+        Action::None
+    }
+
+    pub fn on_enter(
+        &mut self,
+        _tx: mpsc::Sender<event::Event>,
+        db: std::sync::mpsc::Sender<DbRequest>,
+    ) {
+        self.db_tx = Some(db);
+    }
 
     pub fn on_exit(&mut self) {}
+
+    pub fn on_db_response(&mut self, _response: crate::db::DbResponse) -> Action {
+        Action::None
+    }
 }
 
-fn next_focus(current: &FocusField, account_type: &AccountType) -> FocusField {
-    match account_type {
-        AccountType::Organizer => match current {
+fn next_focus(current: &FocusField, account_form: &AccountRegistrationForm) -> FocusField {
+    match account_form {
+        AccountRegistrationForm::Organizer { .. } => match current {
             FocusField::Organization => FocusField::Password,
             FocusField::Password => FocusField::Organization,
             _ => FocusField::Organization,
         },
-        AccountType::Voter => match current {
+        AccountRegistrationForm::User { .. } => match current {
             FocusField::FirstName => FocusField::LastName,
             FocusField::LastName => FocusField::Username,
             FocusField::Username => FocusField::Password,

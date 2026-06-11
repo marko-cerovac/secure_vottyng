@@ -1,19 +1,20 @@
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::symbols::border;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Gauge, Widget};
-use ratatui::Frame;
 
-use crate::event;
 use super::Action;
+use crate::db::DbRequest;
+use crate::event;
 
 pub struct DashboardScene {
     pub progress_bar_color: Color,
@@ -64,7 +65,10 @@ impl DashboardScene {
         let progress_bar = Gauge::default()
             .gauge_style(Style::default().fg(self.progress_bar_color))
             .block(border)
-            .label(format!("Voting in progress: {:.2}%", self.progress * 100_f64))
+            .label(format!(
+                "Voting in progress: {:.2}%",
+                self.progress * 100_f64
+            ))
             .ratio(self.progress);
 
         progress_bar.render(
@@ -88,8 +92,8 @@ impl DashboardScene {
                     self.reset_flag.store(true, Ordering::Relaxed);
                 }
                 KeyCode::Char('l') => {
-                    return Action::SwitchScene(super::Scene::Login(
-                        super::login::LoginScene::new(),
+                    return Action::SwitchScene(super::Scene::InputCert(
+                        super::input_cert::InputCertScene::new(),
                     ));
                 }
                 _ => {}
@@ -98,7 +102,11 @@ impl DashboardScene {
         Action::None
     }
 
-    pub fn on_enter(&mut self, tx: mpsc::Sender<event::Event>) {
+    pub fn on_enter(
+        &mut self,
+        tx: mpsc::Sender<event::Event>,
+        _db: std::sync::mpsc::Sender<DbRequest>,
+    ) {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_clone = stop.clone();
         let reset = self.reset_flag.clone();
@@ -126,6 +134,14 @@ impl DashboardScene {
 
         self.stop_flag = Some(stop);
         self.handle = Some(handle);
+    }
+
+    pub fn handle_paste(&mut self, _text: &str) -> Action {
+        Action::None
+    }
+
+    pub fn on_db_response(&mut self, _response: crate::db::DbResponse) -> Action {
+        Action::None
     }
 
     pub fn on_exit(&mut self) {
