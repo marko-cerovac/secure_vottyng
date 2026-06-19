@@ -1,47 +1,16 @@
+mod request;
+mod response;
+
+pub use request::DbRequest;
+pub use response::DbResponse;
+
 use postgres::{Client, NoTls};
 use std::sync::mpsc;
 use std::thread;
 
 use crate::event::Event;
-use crate::models::AccountRegistrationForm;
 use crate::services::auth::AuthService;
 use crate::services::user::UserService;
-
-pub enum DbRequest {
-    /// Step 1: validate a certificate PEM against the DB.
-    ValidateCertificate {
-        cert_pem: String,
-        is_organizer: bool,
-    },
-    /// Step 2: authenticate with credentials (user was identified by cert in step 1).
-    AuthenticateUser {
-        user_id: i32,
-        identifier: String,
-        password: String,
-        is_organizer: bool,
-    },
-    RegisterUser {
-        form: AccountRegistrationForm,
-    },
-}
-
-pub enum DbResponse {
-    /// Certificate is valid; carries the user_id for step 2.
-    CertificateValid {
-        user_id: i32,
-    },
-    CertificateInvalid(String),
-    AuthSuccess {
-        is_organizer: bool,
-    },
-    AuthFailed(String),
-    RegistrationOk,
-    RegistrationFailed(String),
-}
-
-fn send_response(ui_tx: &mpsc::Sender<Event>, response: DbResponse) -> bool {
-    ui_tx.send(Event::DbResponse(response)).is_ok()
-}
 
 pub fn spawn_db_worker(ui_tx: mpsc::Sender<Event>) -> mpsc::Sender<DbRequest> {
     let url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
@@ -53,7 +22,7 @@ pub fn spawn_db_worker(ui_tx: mpsc::Sender<Event>) -> mpsc::Sender<DbRequest> {
     thread::spawn(move || {
         let mut client = Client::connect(&url, NoTls).expect("failed to connect to database");
 
-        let _ca_hierarchy = crate::crypto::ca::init_ca_hierarchy(&mut client);
+        let ca_hierarchy = crate::crypto::ca::init_ca_hierarchy(&mut client);
 
         for request in req_rx {
             let result = match request {
@@ -105,37 +74,44 @@ pub fn spawn_db_worker(ui_tx: mpsc::Sender<Event>) -> mpsc::Sender<DbRequest> {
                             } else {
                                 auth.increment_voter_failed_attempts(user_id)
                             };
-                            if let Ok(n) = count {
-                                if n >= 3 {
-                                    let _ = if is_organizer {
-                                        auth.revoke_organizer_certificate(user_id)
-                                    } else {
-                                        auth.revoke_voter_certificate(user_id)
-                                    };
-                                    if !send_response(
-                                        &ui_tx,
-                                        DbResponse::AuthFailed(
-                                            "Certificate revoked after 3 failed attempts".into(),
-                                        ),
-                                    ) {
-                                        return;
-                                    }
-                                    continue;
+                            if let Ok(n) = count
+                                && n >= 3
+                            {
+                                let _ = if is_organizer {
+                                    auth.revoke_organizer_certificate(user_id)
+                                } else {
+                                    auth.revoke_voter_certificate(user_id)
+                                };
+
+                                let response = DbResponse::AuthFailed(
+                                    "Certificate revoked after 3 failed attempts".into(),
+                                );
+
+                                if !response.send(&ui_tx) {
+                                    return;
                                 }
+                                continue;
                             }
                             DbResponse::AuthFailed("Invalid credentials".into())
                         }
-                        Err(e) => DbResponse::AuthFailed(e.to_string()),
+                         Err(e) => DbResponse::AuthFailed(format!("Authentication error: {}", e)),
                     }
                 }
                 DbRequest::RegisterUser { form } => {
                     match UserService::new(&mut client).register(form) {
                         Ok(_) => DbResponse::RegistrationOk,
-                        Err(e) => DbResponse::RegistrationFailed(e.to_string()),
+                        Err(e) => DbResponse::RegistrationFailed(format!("Registration error: {}", e)),
+                    }
+                }
+                DbRequest::RegisterUserWithCertificate { form } => {
+                    match UserService::new(&mut client).register_with_certificate(form, &ca_hierarchy) {
+                        Ok(_) => DbResponse::RegistrationOk,
+                        Err(e) => DbResponse::RegistrationFailed(format!("Registration with certificate error: {}", e)),
                     }
                 }
             };
-            if !send_response(&ui_tx, result) {
+
+            if !result.send(&ui_tx) {
                 break;
             }
         }

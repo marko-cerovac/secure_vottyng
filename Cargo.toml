@@ -11,3 +11,9 @@ dotenvy = "0.15"
 chrono = { version = "0.4", features = ["serde"] }
 arboard = "3.6.1"
 rcgen = { version = "0.14.8", features = ["x509-parser"] }
+argon2 = "0.5"
+rand_core = { version = "0.6", features = ["getrandom"] }
+aes-gcm = "0.10"
+pbkdf2 = "0.12"
+base64 = "0.22"
+sha2 = "0.10"

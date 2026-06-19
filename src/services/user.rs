@@ -1,5 +1,8 @@
 use postgres::Client;
 
+use crate::crypto::password::hash_password;
+use crate::crypto::user_cert::{generate_organizer_certificate, generate_voter_certificate};
+use crate::crypto::ca::CaHierarchy;
 use crate::models::{AccountRegistrationForm, Organizer, Voter};
 
 pub struct UserService<'a> {
@@ -11,17 +14,35 @@ impl<'a> UserService<'a> {
         UserService { client }
     }
 
-    /// Register a new user (organizer or voter).
-    /// TODO: hash password properly
-    pub fn register(&mut self, form: AccountRegistrationForm) -> Result<i32, postgres::Error> {
+    /// Register a new user (organizer or voter) with certificate generation.
+    /// Hashes the password using Argon2id and generates X.509 certificate before storing in database.
+    pub fn register_with_certificate(
+        &mut self, 
+        form: AccountRegistrationForm,
+        ca_hierarchy: &CaHierarchy
+    ) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
         match form {
             AccountRegistrationForm::Organizer {
                 organization,
                 password,
             } => {
+                let password_hash = match hash_password(&password) {
+                    Ok(hash) => hash,
+                    Err(e) => return Err(format!("Password hashing failed: {:?}", e).into()),
+                };
+
+                // Generate certificate for organizer
+                let user_cert = generate_organizer_certificate(
+                    &organization,
+                    &organization, // Using organization as identification number for now
+                    &password,
+                    &ca_hierarchy.organizational,
+                )?;
+
+                // Insert organizer with certificate data
                 let rows = self.client.query(
-                    "INSERT INTO organizers (organization, identification_number, password_hash) VALUES ($1, $2, $3) RETURNING id",
-                    &[&organization, &organization, &password],
+                    "INSERT INTO organizers (organization, identification_number, password_hash, certificate, encrypted_private_key) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+                    &[&organization, &organization, &password_hash, &user_cert.certificate_pem, &user_cert.encrypted_private_key],
                 )?;
                 Ok(rows[0].get(0))
             }
@@ -31,9 +52,62 @@ impl<'a> UserService<'a> {
                 username,
                 password,
             } => {
+                let password_hash = match hash_password(&password) {
+                    Ok(hash) => hash,
+                    Err(e) => return Err(format!("Password hashing failed: {:?}", e).into()),
+                };
+
+                // Generate certificate for voter
+                let user_cert = generate_voter_certificate(
+                    &f_name,
+                    &l_name,
+                    &username,
+                    &password,
+                    &ca_hierarchy.voter,
+                )?;
+
+                // Insert voter with certificate data
+                let rows = self.client.query(
+                    "INSERT INTO voters (first_name, last_name, username, password_hash, certificate, encrypted_private_key) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+                    &[&f_name, &l_name, &username, &password_hash, &user_cert.certificate_pem, &user_cert.encrypted_private_key],
+                )?;
+                Ok(rows[0].get(0))
+            }
+        }
+    }
+
+    /// Register a new user (organizer or voter) - legacy method without certificates.
+    /// Hashes the password using Argon2id before storing in database.
+    /// NOTE: This method is deprecated and will be removed once certificate generation is fully integrated.
+    pub fn register(&mut self, form: AccountRegistrationForm) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
+        match form {
+            AccountRegistrationForm::Organizer {
+                organization,
+                password,
+            } => {
+                let password_hash = match hash_password(&password) {
+                    Ok(hash) => hash,
+                    Err(e) => return Err(format!("Password hashing failed: {:?}", e).into()),
+                };
+                let rows = self.client.query(
+                    "INSERT INTO organizers (organization, identification_number, password_hash) VALUES ($1, $2, $3) RETURNING id",
+                    &[&organization, &organization, &password_hash],
+                )?;
+                Ok(rows[0].get(0))
+            }
+            AccountRegistrationForm::User {
+                f_name,
+                l_name,
+                username,
+                password,
+            } => {
+                let password_hash = match hash_password(&password) {
+                    Ok(hash) => hash,
+                    Err(e) => return Err(format!("Password hashing failed: {:?}", e).into()),
+                };
                 let rows = self.client.query(
                     "INSERT INTO voters (first_name, last_name, username, password_hash) VALUES ($1, $2, $3, $4) RETURNING id",
-                    &[&f_name, &l_name, &username, &password],
+                    &[&f_name, &l_name, &username, &password_hash],
                 )?;
                 Ok(rows[0].get(0))
             }

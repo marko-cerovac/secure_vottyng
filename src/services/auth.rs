@@ -1,5 +1,7 @@
 use postgres::Client;
 
+use crate::crypto::password::verify_password;
+
 pub struct AuthService<'a> {
     client: &'a mut Client,
 }
@@ -51,29 +53,51 @@ impl<'a> AuthService<'a> {
     }
 
     /// Authenticate a voter by username and password.
+    /// Verifies the password against the stored hash using Argon2id.
     pub fn authenticate_voter(
         &mut self,
         username: &str,
         password: &str,
-    ) -> Result<bool, postgres::Error> {
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         let rows = self.client.query(
-            "SELECT id FROM voters WHERE username = $1 AND password_hash = $2",
-            &[&username, &password],
+            "SELECT password_hash FROM voters WHERE username = $1",
+            &[&username],
         )?;
-        Ok(!rows.is_empty())
+        
+        match rows.first() {
+            Some(row) => {
+                let stored_hash: String = row.get(0);
+                match verify_password(password, &stored_hash) {
+                    Ok(result) => Ok(result),
+                    Err(e) => Err(format!("Password verification failed: {:?}", e).into()),
+                }
+            }
+            None => Ok(false),
+        }
     }
 
     /// Authenticate an organizer by identification number and password.
+    /// Verifies the password against the stored hash using Argon2id.
     pub fn authenticate_organizer(
         &mut self,
         id_number: &str,
         password: &str,
-    ) -> Result<bool, postgres::Error> {
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         let rows = self.client.query(
-            "SELECT id FROM organizers WHERE identification_number = $1 AND password_hash = $2",
-            &[&id_number, &password],
+            "SELECT password_hash FROM organizers WHERE identification_number = $1",
+            &[&id_number],
         )?;
-        Ok(!rows.is_empty())
+        
+        match rows.first() {
+            Some(row) => {
+                let stored_hash: String = row.get(0);
+                match verify_password(password, &stored_hash) {
+                    Ok(result) => Ok(result),
+                    Err(e) => Err(format!("Password verification failed: {:?}", e).into()),
+                }
+            }
+            None => Ok(false),
+        }
     }
 
     /// Check whether a voter's certificate has been revoked.

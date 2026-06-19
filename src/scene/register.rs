@@ -66,8 +66,8 @@ impl RegisterScene {
         let [hdr_area, hr_area, input_area, ftr_area] = Layout::vertical([
             Constraint::Percentage(20),
             Constraint::Length(1),
-            Constraint::Percentage(70),
-            Constraint::Length(5),
+            Constraint::Percentage(75),
+            Constraint::Length(3),
         ])
         .areas(content_area);
 
@@ -228,6 +228,10 @@ impl RegisterScene {
                     Span::raw(" focus next  |  "),
                     Span::raw("Enter").bold(),
                     Span::raw(" register  |  "),
+                ])
+                .centered()
+                .dark_gray(),
+                Line::from(vec![
                     Span::raw("Ctrl+"),
                     Span::raw("L").bold(),
                     Span::raw(" login  |  "),
